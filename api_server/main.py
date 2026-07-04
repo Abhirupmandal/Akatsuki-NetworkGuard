@@ -131,6 +131,49 @@ def _run_benchmark(rows: int) -> dict:
 
     return result
 
+# ── Validation Live Drift Engine ─────────────────────────────
+VALIDATION_STATE = {
+    "validation_per_class": [],
+    "confusion_matrix": {},
+    "total_samples": 0,
+    "last_updated": None,
+    "pipeline_status": "idle"
+}
+
+def _init_validation_state():
+    VALIDATION_STATE["validation_per_class"] = copy.deepcopy(mock_data.get("validation_per_class", []))
+    VALIDATION_STATE["confusion_matrix"] = copy.deepcopy(mock_data.get("confusion_matrix", {}))
+    total = sum(sum(row) for row in VALIDATION_STATE["confusion_matrix"].get("matrix", []))
+    VALIDATION_STATE["total_samples"] = total
+    VALIDATION_STATE["last_updated"] = datetime.now(timezone.utc).isoformat()
+    VALIDATION_STATE["pipeline_status"] = "evaluating"
+
+_init_validation_state()
+
+def _apply_validation_drift():
+    now = datetime.now(timezone.utc)
+    for cls in VALIDATION_STATE["validation_per_class"]:
+        cls["precision"] = max(0.8, min(1.0, cls["precision"] + random.uniform(-0.005, 0.005)))
+        cls["recall"] = max(0.8, min(1.0, cls["recall"] + random.uniform(-0.005, 0.005)))
+        cls["f1"] = max(0.8, min(1.0, cls["f1"] + random.uniform(-0.005, 0.005)))
+        cls["false_positive_rate"] = max(0.0, min(0.1, cls.get("false_positive_rate", 0) + random.uniform(-0.002, 0.002)))
+        
+    matrix = VALIDATION_STATE["confusion_matrix"].get("matrix", [])
+    samples_added = 0
+    if matrix:
+        for i in range(len(matrix)):
+            for j in range(len(matrix[i])):
+                if i == j:
+                    add = random.randint(10, 50)
+                else:
+                    add = random.randint(0, 2)
+                matrix[i][j] += add
+                samples_added += add
+                
+    VALIDATION_STATE["total_samples"] += samples_added
+    VALIDATION_STATE["last_updated"] = now.isoformat()
+    VALIDATION_STATE["pipeline_status"] = "evaluating"
+
 # ── SQLite User Database ─────────────────────────────────────
 DB_PATH = os.path.join(os.path.dirname(__file__), "networkguard_users.db")
 
@@ -479,10 +522,8 @@ def get_benchmark_history():
 @app.get("/api/validation")
 def get_validation():
     if USE_MOCK_DATA:
-        return {
-            "validation_per_class": mock_data.get("validation_per_class", []),
-            "confusion_matrix": mock_data.get("confusion_matrix", {})
-        }
+        _apply_validation_drift()
+        return VALIDATION_STATE
     query = f"SELECT * FROM `{PROJECT_ID}.{BIGQUERY_DATASET}.validation_metrics` LIMIT 1"
     rows = query_bq(query)
     if not rows:
@@ -507,6 +548,17 @@ def get_validation():
         "validation_per_class": per_class,
         "confusion_matrix": mock_data.get("confusion_matrix", {})
     }
+
+@app.post("/api/validation/recalibrate")
+def recalibrate_validation():
+    """Simulate a model recalibration event that bumps up baseline metrics."""
+    _init_validation_state()
+    for cls in VALIDATION_STATE["validation_per_class"]:
+        cls["precision"] = min(1.0, cls["precision"] + 0.01)
+        cls["recall"] = min(1.0, cls["recall"] + 0.01)
+        cls["f1"] = min(1.0, cls["f1"] + 0.01)
+        cls["false_positive_rate"] = max(0.0, cls.get("false_positive_rate", 0.0) - 0.005)
+    return {"status": "success", "message": "Model recalibrated successfully"}
 
 @app.get("/api/trends/{window}")
 def get_trends(window: str):
