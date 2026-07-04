@@ -61,6 +61,21 @@
     "gpu_flows_per_sec": 285000,
     "speedup_factor": 34.75
   },
+  "benchmarks": {
+    "benchmark_v2": [
+      { "rows": 100000,   "rows_label": "100K",  "cpu_seconds": 12.4, "gpu_seconds": 1.1,  "cpu_throughput": 8065,   "gpu_throughput": 90909 },
+      { "rows": 1000000,  "rows_label": "1M",    "cpu_seconds": 118,  "gpu_seconds": 4.3,  "cpu_throughput": 8475,   "gpu_throughput": 232558 },
+      { "rows": 2800000,  "rows_label": "2.8M",  "cpu_seconds": 340,  "gpu_seconds": 9.8,  "cpu_throughput": 8235,   "gpu_throughput": 285714 }
+    ],
+    "throughput_summary": {
+      "cpu_flows_per_sec": 8200,
+      "gpu_flows_per_sec": 285000,
+      "speedup_factor": 34.75
+    },
+    "pipeline_status": "running",
+    "total_flows_processed": 14832500,
+    "last_updated": "2026-07-04T12:00:00Z"
+  },
   "validation_per_class": [
     { "class": "BENIGN",      "precision": 0.998, "recall": 0.997, "f1": 0.997, "support": 440031, "false_positive_rate": 0.002 },
     { "class": "DDoS",        "precision": 0.994, "recall": 0.999, "f1": 0.996, "support": 41835,  "false_positive_rate": 0.006 },

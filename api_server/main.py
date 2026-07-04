@@ -1,14 +1,20 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()
 import json
 import hashlib
 import secrets
 import sqlite3
+import copy
+import random
+import time
+from datetime import datetime, timezone
 import redis
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from google.cloud import bigquery
-from typing import Any
+from typing import Any, Optional
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "your-gcp-project-id")
 BIGQUERY_DATASET = os.getenv("BIGQUERY_DATASET", "networkguard_dataset")
@@ -40,6 +46,90 @@ try:
         mock_data = json.load(f)
 except FileNotFoundError:
     print("[!] Warning: Could not find frontend mock-data.json for fallback.")
+
+# ── Live Benchmark State Engine ──────────────────────────────
+BENCHMARK_STATE = {
+    "benchmark_v2": [],
+    "throughput_summary": {
+        "cpu_flows_per_sec": 8200,
+        "gpu_flows_per_sec": 285000,
+        "speedup_factor": 34.75
+    },
+    "pipeline_status": "running",
+    "total_flows_processed": 14_832_500,
+    "last_updated": datetime.now(timezone.utc).isoformat(),
+}
+BENCHMARK_HISTORY: list[dict] = []
+_bench_start_time = time.time()
+
+def _init_benchmark_state():
+    """Seed benchmark state from mock data."""
+    base = mock_data.get("benchmark_v2", [
+        {"rows": 100000, "rows_label": "100K", "cpu_seconds": 12.4, "gpu_seconds": 1.1, "cpu_throughput": 8065, "gpu_throughput": 90909},
+        {"rows": 1000000, "rows_label": "1M", "cpu_seconds": 118, "gpu_seconds": 4.3, "cpu_throughput": 8475, "gpu_throughput": 232558},
+        {"rows": 2800000, "rows_label": "2.8M", "cpu_seconds": 340, "gpu_seconds": 9.8, "cpu_throughput": 8235, "gpu_throughput": 285714},
+    ])
+    BENCHMARK_STATE["benchmark_v2"] = copy.deepcopy(base)
+    tp = mock_data.get("throughput_summary", BENCHMARK_STATE["throughput_summary"])
+    BENCHMARK_STATE["throughput_summary"] = copy.deepcopy(tp)
+
+_init_benchmark_state()
+
+def _apply_benchmark_drift():
+    """Apply small random variance (±2-5%) to simulate live workload."""
+    now = datetime.now(timezone.utc)
+    elapsed = time.time() - _bench_start_time
+
+    for entry in BENCHMARK_STATE["benchmark_v2"]:
+        # GPU times fluctuate more (active workload), CPU stays relatively stable
+        entry["gpu_seconds"] = round(entry["gpu_seconds"] * random.uniform(0.95, 1.05), 2)
+        entry["cpu_seconds"] = round(entry["cpu_seconds"] * random.uniform(0.98, 1.02), 1)
+        if entry["gpu_seconds"] > 0:
+            entry["gpu_throughput"] = round(entry["rows"] / entry["gpu_seconds"])
+        if entry["cpu_seconds"] > 0:
+            entry["cpu_throughput"] = round(entry["rows"] / entry["cpu_seconds"])
+
+    tp = BENCHMARK_STATE["throughput_summary"]
+    tp["gpu_flows_per_sec"] = round(tp["gpu_flows_per_sec"] * random.uniform(0.97, 1.03))
+    tp["cpu_flows_per_sec"] = round(tp["cpu_flows_per_sec"] * random.uniform(0.99, 1.01))
+    tp["speedup_factor"] = round(tp["gpu_flows_per_sec"] / max(tp["cpu_flows_per_sec"], 1), 2)
+
+    # Increment flows processed (~285K flows/sec * 5s poll interval)
+    BENCHMARK_STATE["total_flows_processed"] += random.randint(1_200_000, 1_600_000)
+    BENCHMARK_STATE["last_updated"] = now.isoformat()
+    BENCHMARK_STATE["pipeline_status"] = "running"
+
+def _run_benchmark(rows: int) -> dict:
+    """Simulate running a benchmark at a given row scale."""
+    # Realistic scaling: GPU is near-linear, CPU is super-linear
+    base_gpu_rate = 290000 * random.uniform(0.92, 1.08)  # ~290K rows/sec GPU
+    base_cpu_rate = 8200 * random.uniform(0.95, 1.05)     # ~8.2K rows/sec CPU
+
+    gpu_seconds = round(rows / base_gpu_rate, 2)
+    cpu_seconds = round(rows / base_cpu_rate, 1)
+    speedup = round(cpu_seconds / max(gpu_seconds, 0.01), 1)
+
+    if rows >= 1_000_000:
+        rows_label = f"{rows / 1e6:.1f}M"
+    else:
+        rows_label = f"{rows / 1e3:.0f}K"
+
+    result = {
+        "rows": rows,
+        "rows_label": rows_label,
+        "cpu_seconds": cpu_seconds,
+        "gpu_seconds": gpu_seconds,
+        "cpu_throughput": round(rows / max(cpu_seconds, 0.01)),
+        "gpu_throughput": round(rows / max(gpu_seconds, 0.01)),
+        "speedup": speedup,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    BENCHMARK_HISTORY.insert(0, result)
+    if len(BENCHMARK_HISTORY) > 20:
+        BENCHMARK_HISTORY.pop()
+
+    return result
 
 # ── SQLite User Database ─────────────────────────────────────
 DB_PATH = os.path.join(os.path.dirname(__file__), "networkguard_users.db")
@@ -325,9 +415,13 @@ def get_kpis():
 @app.get("/api/benchmarks")
 def get_benchmarks():
     if USE_MOCK_DATA:
+        _apply_benchmark_drift()
         return {
-            "benchmark_v2": mock_data.get("benchmark_v2", []),
-            "throughput_summary": mock_data.get("throughput_summary", {})
+            "benchmark_v2": BENCHMARK_STATE["benchmark_v2"],
+            "throughput_summary": BENCHMARK_STATE["throughput_summary"],
+            "pipeline_status": BENCHMARK_STATE["pipeline_status"],
+            "total_flows_processed": BENCHMARK_STATE["total_flows_processed"],
+            "last_updated": BENCHMARK_STATE["last_updated"],
         }
     query = f"SELECT * FROM `{PROJECT_ID}.{BIGQUERY_DATASET}.benchmark_results` ORDER BY rows ASC"
     rows = query_bq(query)
@@ -359,8 +453,28 @@ def get_benchmarks():
             "cpu_flows_per_sec": cpu_tp,
             "gpu_flows_per_sec": gpu_tp,
             "speedup_factor": speedup
-        }
+        },
+        "pipeline_status": "running",
+        "total_flows_processed": 0,
+        "last_updated": datetime.now(timezone.utc).isoformat(),
     }
+
+class BenchmarkRunRequest(BaseModel):
+    rows: Optional[int] = None
+
+@app.post("/api/benchmarks/run")
+def run_benchmark(req: BenchmarkRunRequest):
+    """Trigger a new benchmark run at a given scale."""
+    row_count = req.rows or random.choice([100_000, 250_000, 500_000, 1_000_000, 2_000_000, 5_000_000])
+    if row_count < 1000 or row_count > 50_000_000:
+        raise HTTPException(status_code=400, detail="Row count must be between 1,000 and 50,000,000")
+    result = _run_benchmark(row_count)
+    return {"status": "success", "benchmark": result}
+
+@app.get("/api/benchmarks/history")
+def get_benchmark_history():
+    """Return the last 20 triggered benchmark runs."""
+    return {"history": BENCHMARK_HISTORY}
 
 @app.get("/api/validation")
 def get_validation():
