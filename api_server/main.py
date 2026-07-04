@@ -2,11 +2,13 @@ import os
 import json
 import hashlib
 import secrets
+import sqlite3
+import redis
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from google.cloud import bigquery
-from typing import Dict, Any
+from typing import Any
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "your-gcp-project-id")
 BIGQUERY_DATASET = os.getenv("BIGQUERY_DATASET", "networkguard_dataset")
@@ -39,6 +41,114 @@ try:
 except FileNotFoundError:
     print("[!] Warning: Could not find frontend mock-data.json for fallback.")
 
+# ── SQLite User Database ─────────────────────────────────────
+DB_PATH = os.path.join(os.path.dirname(__file__), "networkguard_users.db")
+
+def _get_db():
+    """Get a new SQLite connection (thread-safe: one per call)."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def _init_db():
+    """Create users table and seed the default admin account."""
+    conn = _get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'Tier-1 Analyst',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # Seed default admin if not already present
+    admin_hash = hashlib.sha256("networkguard2026".encode()).hexdigest()
+    cursor.execute(
+        "INSERT OR IGNORE INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+        ("admin", admin_hash, "Tier-3 Operator")
+    )
+    conn.commit()
+    conn.close()
+    print(f"[DB] User database initialized at {DB_PATH}")
+
+_init_db()
+# ─────────────────────────────────────────────────────────────
+
+# ── Redis Cache Layer ────────────────────────────────────────
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
+REDIS_TTL = int(os.getenv("REDIS_CACHE_TTL", "3600"))  # 1 hour default
+
+redis_client = None
+try:
+    redis_client = redis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=REDIS_PASSWORD,
+        db=0,
+        decode_responses=True,
+        socket_connect_timeout=3,
+    )
+    redis_client.ping()
+    print(f"[CACHE] [OK] Redis connected at {REDIS_HOST}:{REDIS_PORT}")
+except Exception as e:
+    redis_client = None
+    print(f"[CACHE] [WARN] Redis unavailable ({e}). Falling back to SQLite-only mode.")
+
+CACHE_PREFIX = "ng:user:"
+
+def _cache_set_user(username: str, password_hash: str, role: str):
+    """Write user credentials to Redis cache with TTL."""
+    if not redis_client:
+        return
+    try:
+        key = f"{CACHE_PREFIX}{username}"
+        redis_client.hset(key, mapping={"password_hash": password_hash, "role": role})
+        redis_client.expire(key, REDIS_TTL)
+    except Exception:
+        pass  # cache write failure is non-fatal
+
+def _cache_get_user(username: str):
+    """Read user credentials from Redis cache. Returns dict or None."""
+    if not redis_client:
+        return None
+    try:
+        key = f"{CACHE_PREFIX}{username}"
+        data = redis_client.hgetall(key)
+        if data and "password_hash" in data:
+            return data
+    except Exception:
+        pass
+    return None
+
+def _cache_delete_user(username: str):
+    """Invalidate a user's cache entry."""
+    if not redis_client:
+        return
+    try:
+        redis_client.delete(f"{CACHE_PREFIX}{username}")
+    except Exception:
+        pass
+
+def _warm_cache():
+    """Pre-load all existing users from SQLite into Redis on startup."""
+    if not redis_client:
+        return
+    conn = _get_db()
+    rows = conn.execute("SELECT username, password_hash, role FROM users").fetchall()
+    conn.close()
+    count = 0
+    for row in rows:
+        _cache_set_user(row["username"], row["password_hash"], row["role"])
+        count += 1
+    print(f"[CACHE] Warmed Redis cache with {count} user(s)")
+
+_warm_cache()
+# ─────────────────────────────────────────────────────────────
+
 def query_bq(query: str) -> list:
     if USE_MOCK_DATA or not client:
         raise NotImplementedError("BigQuery is disabled in mock mode.")
@@ -51,14 +161,11 @@ def query_bq(query: str) -> list:
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "mode": "mock" if USE_MOCK_DATA else "bigquery"}
-
-USERS_DB: Dict[str, Dict[str, str]] = {
-    "admin": {
-        "password_hash": hashlib.sha256("networkguard2026".encode()).hexdigest(),
-        "role": "Tier-3 Operator"
+    return {
+        "status": "ok",
+        "mode": "mock" if USE_MOCK_DATA else "bigquery",
+        "cache": "redis" if redis_client else "disabled",
     }
-}
 
 class AuthRequest(BaseModel):
     username: str
@@ -71,27 +178,53 @@ def signup(req: AuthRequest):
         raise HTTPException(status_code=400, detail="Username and password are required.")
     if len(req.password) < 6:
         raise HTTPException(status_code=400, detail="Security key must be at least 6 characters.")
-    if username in USERS_DB:
+    password_hash = hashlib.sha256(req.password.encode()).hexdigest()
+    role = "Tier-1 Analyst"
+    # Write to SQLite (source of truth)
+    conn = _get_db()
+    try:
+        conn.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+            (username, password_hash, role)
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
         raise HTTPException(status_code=409, detail="Operator handle already registered.")
-    USERS_DB[username] = {
-        "password_hash": hashlib.sha256(req.password.encode()).hexdigest(),
-        "role": "Tier-1 Analyst"
-    }
+    conn.close()
+    # Write-through to Redis cache
+    _cache_set_user(username, password_hash, role)
     token = secrets.token_hex(16)
-    print(f"\n[AUTH] ✅ New operator registered: {username} (Role: Tier-1 Analyst)")
-    return {"status": "success", "token": token, "username": username, "role": "Tier-1 Analyst"}
+    print(f"\n[AUTH] [OK] New operator registered: {username} (Role: {role})")
+    return {"status": "success", "token": token, "username": username, "role": role}
 
 @app.post("/api/auth/login")
 def login(req: AuthRequest):
     username = req.username.strip().lower()
-    user = USERS_DB.get(username)
+    # 1️⃣  Try Redis cache first (sub-millisecond lookup)
+    cached = _cache_get_user(username)
+    if cached:
+        password_hash = hashlib.sha256(req.password.encode()).hexdigest()
+        if password_hash != cached["password_hash"]:
+            raise HTTPException(status_code=401, detail="SECURE HANDSHAKE REJECTED: Invalid security key.")
+        token = secrets.token_hex(16)
+        print(f"\n[AUTH] Operator authenticated (CACHE HIT): {username} (Role: {cached['role']})")
+        return {"status": "success", "token": token, "username": username, "role": cached["role"]}
+    # 2️⃣  Cache miss — fall back to SQLite
+    conn = _get_db()
+    user = conn.execute(
+        "SELECT password_hash, role FROM users WHERE username = ?", (username,)
+    ).fetchone()
+    conn.close()
     if not user:
         raise HTTPException(status_code=401, detail="Operator handle not found.")
     password_hash = hashlib.sha256(req.password.encode()).hexdigest()
     if password_hash != user["password_hash"]:
         raise HTTPException(status_code=401, detail="SECURE HANDSHAKE REJECTED: Invalid security key.")
+    # Populate cache for next login
+    _cache_set_user(username, user["password_hash"], user["role"])
     token = secrets.token_hex(16)
-    print(f"\n[AUTH] 🔓 Operator authenticated: {username} (Role: {user['role']})")
+    print(f"\n[AUTH] Operator authenticated (DB -> cached): {username} (Role: {user['role']})")
     return {"status": "success", "token": token, "username": username, "role": user["role"]}
 
 class BlockRequest(BaseModel):
@@ -101,9 +234,9 @@ class BlockRequest(BaseModel):
 
 @app.post("/api/mitigate/block")
 def mitigate_block(req: BlockRequest):
-    print(f"\n[ZERO TRUST POLICY ENFORCEMENT] 🚨 threat activity detected from {req.source_ip} ({req.predicted_label}, Risk: {req.risk_score})")
-    print(f"[ZERO TRUST POLICY ENFORCEMENT] 🛡️ Deploying access restriction rule to local firewalls...")
-    print(f"[ZERO TRUST POLICY ENFORCEMENT] 🔒 Revoking OIDC tokens and placing {req.source_ip} in quarantine segment VLAN-99.")
+    print(f"\n[ZERO TRUST POLICY ENFORCEMENT] [ALERT] threat activity detected from {req.source_ip} ({req.predicted_label}, Risk: {req.risk_score})")
+    print(f"[ZERO TRUST POLICY ENFORCEMENT] Deploying access restriction rule to local firewalls...")
+    print(f"[ZERO TRUST POLICY ENFORCEMENT] Revoking OIDC tokens and placing {req.source_ip} in quarantine segment VLAN-99.")
     print(f"[ZERO TRUST POLICY ENFORCEMENT] Action successfully executed.\n")
     return {"status": "success", "message": f"IP {req.source_ip} isolated from network segment. Access revoked."}
 

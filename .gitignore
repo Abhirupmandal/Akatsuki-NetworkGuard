@@ -3,6 +3,7 @@
 # ============================================================
 
 # ─── System / OS Files ──────────────────────────────────────
+.agent/
 .DS_Store
 Thumbs.db
 desktop.ini
@@ -75,6 +76,7 @@ jwt_secret.txt
 backend/confusion_matrix.png
 confusion_matrix.png
 *.log
+*.db
 logs/
 tmp/
 temp/
