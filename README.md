@@ -336,14 +336,11 @@ This section contains extended details, architecture flow maps, and testing conf
    ```
 
 ### 8. Environment Variables Configuration
-Create a `.env` file in `api_server/` or pass as system environment variables:
-```ini
-GCP_PROJECT_ID=your-gcp-project-id
-BIGQUERY_DATASET=networkguard_dataset
-USE_MOCK_DATA=true
-REDIS_HOST=localhost
-REDIS_PORT=6379
+Create a `.env` file in `api_server/` based on the provided example:
+```bash
+cp api_server/.env.example api_server/.env
 ```
+Then edit the `.env` file with your own values. See `api_server/.env.example` for the required variable names.
 
 ### 9. Execution & Verification Guide
 1. **Run Backend API**:
