@@ -1,0 +1,80 @@
+# ============================================================
+# NetworkGuard Root .gitignore
+# ============================================================
+
+# ─── System / OS Files ──────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── IDEs & Editors ─────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.project
+.classpath
+.settings/
+
+# ─── Node / Frontend ────────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+build/
+out/
+.npm
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── Python ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+.toast
+.cache
+.pytest_cache/
+.htmlcov/
+.tox/
+.coverage
+.coverage.*
+.ipynb_checkpoints/
+.mypy_cache/
+.noserc
+nosetests.xml
+
+# ─── Credentials, Keys, and Secrets ───────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+*credential*.json
+*service-account*.json
+*gcp-key*.json
+gcp_key.json
+jwt_secret.txt
+
+# ─── Temporary Outputs & Assets ───────────────────────────
+backend/confusion_matrix.png
+confusion_matrix.png
+*.log
+logs/
+tmp/
+temp/

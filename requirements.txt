@@ -1,0 +1,38 @@
+# ============================================================
+# NetworkGuard — Master Python Requirements
+# ============================================================
+# Install all dependencies with:
+#   pip install -r requirements.txt
+#
+# For GPU acceleration (RAPIDS cuDF/cuML), see backend/requirements.txt
+
+# ─── API Server (FastAPI) ───────────────────────────────────
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic>=2.4.2
+
+# ─── Google Cloud ───────────────────────────────────────────
+google-cloud-bigquery>=3.11.0
+google-cloud-storage>=2.10.0
+pandas-gbq>=0.19.2
+db-dtypes==1.3.0
+
+# ─── Data Science (CPU fallback) ───────────────────────────
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# ─── Live Packet Sniffer ────────────────────────────────────
+scapy>=2.5.0
+# Note: Scapy on Windows also requires Npcap to be installed.
+# Download the installer from: https://npcap.com/
+# The npcap-1.88.exe is included in the project root.
+
+# ─── Dashboard (Optional Streamlit view) ───────────────────
+streamlit==1.38.0
+plotly==5.24.0
+
+# ─── Big Data (Optional Spark integration) ─────────────────
+# pyspark>=3.4.0   # Uncomment if running Spark RAPIDS pipeline
