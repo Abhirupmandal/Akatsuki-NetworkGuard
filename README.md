@@ -336,11 +336,11 @@ This section contains extended details, architecture flow maps, and testing conf
    ```
 
 ### 8. Environment Variables Configuration
-Create a `.env` file in `api_server/` based on the provided example:
-```bash
-cp api_server/.env.example api_server/.env
-```
-Then edit the `.env` file with your own values. See `api_server/.env.example` for the required variable names.
+No `.env` file is required. The API server runs in **mock-data mode** by default with all necessary fallbacks built in. If you later want to connect to Google BigQuery or Redis, set these optional system environment variables:
+- `GCP_PROJECT_ID` — Your GCP project ID (for BigQuery integration)
+- `BIGQUERY_DATASET` — BigQuery dataset name (default: `networkguard_dataset`)
+- `USE_MOCK_DATA` — Set to `false` to use live BigQuery data instead of mock data
+- `REDIS_HOST` / `REDIS_PORT` — Redis connection (falls back to SQLite if unavailable)
 
 ### 9. Execution & Verification Guide
 1. **Run Backend API**:
