@@ -1,6 +1,7 @@
 import time
 import sys
 import json
+import os
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -36,7 +37,8 @@ def post_flow_to_api(src_ip, dest_ip, label, risk_score):
         "recommended_action": "",
         "status": "Open" if label != "BENIGN" else "Logged"
     }
-    url = "http://127.0.0.1:8000/api/flows"
+    api_server = os.getenv("API_SERVER_URL", "http://127.0.0.1:8000")
+    url = f"{api_server.rstrip('/')}/api/flows"
     req = urllib.request.Request(url, method="POST")
     req.add_header("Content-Type", "application/json")
     try:

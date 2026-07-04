@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Shield, Lock, User, Terminal, UserPlus, LogIn } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { getApiUrl } from '../config';
 
 interface LoginProps {
   onLogin: () => void;
@@ -57,7 +58,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
     try {
       const endpoint = mode === 'signin' ? '/api/auth/login' : '/api/auth/signup';
-      const res = await fetch(`http://127.0.0.1:8000${endpoint}`, {
+      const res = await fetch(getApiUrl(endpoint), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: username.trim(), password }),

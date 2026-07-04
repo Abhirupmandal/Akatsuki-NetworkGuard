@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import mockData from '../data/mock-data.json';
+import { getApiUrl } from '../config';
 
 export function useApi<T>(
   endpoint: string,
@@ -16,7 +17,7 @@ export function useApi<T>(
     const fetchData = async (isInitial = false) => {
       if (isInitial) setLoading(true);
       try {
-        const response = await fetch(endpoint);
+        const response = await fetch(getApiUrl(endpoint));
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }

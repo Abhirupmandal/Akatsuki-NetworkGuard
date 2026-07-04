@@ -5,6 +5,7 @@ import { SeverityBadge } from '../components/SeverityBadge';
 import { RiskScoreBar } from '../components/RiskScoreBar';
 import { cn } from '../lib/utils';
 import { useApi } from '../hooks/useApi';
+import { getApiUrl } from '../config';
 
 interface Alert {
   timestamp: string;
@@ -44,7 +45,7 @@ export const AlertConsole: React.FC = () => {
     if (action === 'Block') {
       setMitigating(alert.source_ip);
       try {
-        const response = await fetch('/api/mitigate/block', {
+        const response = await fetch(getApiUrl('/api/mitigate/block'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
