@@ -73,11 +73,10 @@ def _init_db():
     conn.close()
     print(f"[DB] User database initialized at {DB_PATH}")
 
-_init_db()
 # ─────────────────────────────────────────────────────────────
 
 # ── Redis Cache Layer ────────────────────────────────────────
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 REDIS_TTL = int(os.getenv("REDIS_CACHE_TTL", "3600"))  # 1 hour default
@@ -91,6 +90,7 @@ try:
         db=0,
         decode_responses=True,
         socket_connect_timeout=3,
+        socket_timeout=3,
     )
     redis_client.ping()
     print(f"[CACHE] [OK] Redis connected at {REDIS_HOST}:{REDIS_PORT}")
@@ -146,7 +146,11 @@ def _warm_cache():
         count += 1
     print(f"[CACHE] Warmed Redis cache with {count} user(s)")
 
-_warm_cache()
+@app.on_event("startup")
+def startup_event():
+    _init_db()
+    _warm_cache()
+
 # ─────────────────────────────────────────────────────────────
 
 def query_bq(query: str) -> list:
@@ -402,4 +406,10 @@ def get_explainability():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        reload_excludes=["*.db", "*.db-journal", "*.db-wal"]
+    )
