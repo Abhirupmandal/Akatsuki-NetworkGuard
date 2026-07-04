@@ -1,5 +1,10 @@
 # 🛡️ NetworkGuard — Zero-Trust AI Security Operations Console
 
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](#)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](#)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
+[![Hackathon](https://img.shields.io/badge/GEN%20AI%20Academy-Hackathon-orange.svg)](#)
+
 > **GPU-Accelerated Network Intrusion Detection & SOAR Platform**  
 > Built on NVIDIA RAPIDS · Google Cloud · FastAPI · React
 
